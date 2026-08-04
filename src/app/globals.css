@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #faf9f6;
+  --ink: #1f2420;
+  --sub: #6b7268;
+  --line: #e7e4dc;
+  --accent: #5c7a63;
+  --accent-soft: #eaf1ea;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* @layer components places this BEFORE the utilities layer in the compiled
+   stylesheet, so utility classes like `hidden`/`md:hidden` (used to toggle
+   this badge between mobile/desktop nav placements) still win on source-order
+   ties instead of losing to this rule's `display: inline-flex`. */
+@layer components {
+  .mock-badge {
+    @apply inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5;
+  }
+}
