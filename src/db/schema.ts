@@ -58,6 +58,7 @@ export const agentTypeEnum = pgEnum("agent_type", [
   "PUBLISHING",
   "OPERATIONS",
   "ANALYTICS",
+  "MEETING_ANALYSIS",
 ]);
 export const agentRunStatusEnum = pgEnum("agent_run_status", [
   "COMPLETED",
@@ -73,6 +74,13 @@ export const publicationJobStatusEnum = pgEnum("publication_job_status", [
   "FAILED",
   "RETRYING",
   "CANCELED",
+]);
+export const meetingStatusEnum = pgEnum("meeting_status", [
+  "DRAFT",
+  "TRANSCRIBED",
+  "ANALYZED",
+  "PUBLISHED",
+  "FAILED",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -467,6 +475,66 @@ export const auditLogs = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Meetings — bilingual (ko/zh) recording & analysis
+// ---------------------------------------------------------------------------
+// See src/lib/agents/meeting-analysis.ts for the Phase 1 rule-based (not
+// LLM-backed) extraction this feeds, and src/lib/slack.ts for delivery.
+
+export const meetings = pgTable(
+  "meetings",
+  {
+    id: cuid(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    occurredAt: timestamp("occurred_at").notNull().defaultNow(),
+    // Languages expected in this meeting, e.g. ["ko", "zh"] for a bilingual
+    // 한중 회의. Informational — actual detection runs per-line at analysis time.
+    languages: text("languages").array().notNull().default(["ko", "zh"]),
+    participants: text("participants").array().notNull().default([]),
+    audioAssetUrl: text("audio_asset_url"),
+    transcriptText: text("transcript_text"),
+    status: meetingStatusEnum("status").notNull().default("DRAFT"),
+    createdById: text("created_by_id").notNull().references(() => users.id),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("meetings_org_idx").on(t.organizationId), index("meetings_status_idx").on(t.status)]
+);
+
+export const meetingSummaries = pgTable(
+  "meeting_summaries",
+  {
+    id: cuid(),
+    meetingId: text("meeting_id").notNull().unique().references(() => meetings.id, { onDelete: "cascade" }),
+    agentRunId: text("agent_run_id").references(() => agentRuns.id),
+    languageBreakdown: jsonb("language_breakdown").notNull(),
+    keyStatementsKo: jsonb("key_statements_ko").notNull(),
+    keyStatementsZh: jsonb("key_statements_zh").notNull(),
+    decisions: jsonb("decisions").notNull(),
+    actionItems: jsonb("action_items").notNull(),
+    meetingRisks: jsonb("meeting_risks").notNull(),
+    confidence: doublePrecision("confidence").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("meeting_summaries_meeting_idx").on(t.meetingId)]
+);
+
+export const meetingSlackDeliveries = pgTable(
+  "meeting_slack_deliveries",
+  {
+    id: cuid(),
+    meetingId: text("meeting_id").notNull().references(() => meetings.id, { onDelete: "cascade" }),
+    mode: connectorModeEnum("mode").notNull().default("MOCK"),
+    succeeded: boolean("succeeded").notNull(),
+    responseSummary: jsonb("response_summary"),
+    errorMessage: text("error_message"),
+    deliveredById: text("delivered_by_id").notNull().references(() => users.id),
+    occurredAt: timestamp("occurred_at").notNull().defaultNow(),
+  },
+  (t) => [index("meeting_slack_deliveries_meeting_idx").on(t.meetingId)]
+);
+
+// ---------------------------------------------------------------------------
 // Relations (for Drizzle's relational query API)
 // ---------------------------------------------------------------------------
 
@@ -475,6 +543,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   approvals: many(approvals),
   notifications: many(notifications),
   comments: many(commentThreads),
+  meetings: many(meetings),
 }));
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -484,6 +553,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   campaigns: many(campaigns),
   promptTemplates: many(promptTemplates),
   notifications: many(notifications),
+  meetings: many(meetings),
 }));
 
 export const membershipsRelations = relations(memberships, ({ one }) => ({
@@ -558,4 +628,21 @@ export const promptTemplatesRelations = relations(promptTemplates, ({ one, many 
 export const promptVersionsRelations = relations(promptVersions, ({ one, many }) => ({
   promptTemplate: one(promptTemplates, { fields: [promptVersions.promptTemplateId], references: [promptTemplates.id] }),
   agentRuns: many(agentRuns),
+}));
+
+export const meetingsRelations = relations(meetings, ({ one, many }) => ({
+  organization: one(organizations, { fields: [meetings.organizationId], references: [organizations.id] }),
+  createdBy: one(users, { fields: [meetings.createdById], references: [users.id] }),
+  summary: one(meetingSummaries, { fields: [meetings.id], references: [meetingSummaries.meetingId] }),
+  slackDeliveries: many(meetingSlackDeliveries),
+}));
+
+export const meetingSummariesRelations = relations(meetingSummaries, ({ one }) => ({
+  meeting: one(meetings, { fields: [meetingSummaries.meetingId], references: [meetings.id] }),
+  agentRun: one(agentRuns, { fields: [meetingSummaries.agentRunId], references: [agentRuns.id] }),
+}));
+
+export const meetingSlackDeliveriesRelations = relations(meetingSlackDeliveries, ({ one }) => ({
+  meeting: one(meetings, { fields: [meetingSlackDeliveries.meetingId], references: [meetings.id] }),
+  deliveredBy: one(users, { fields: [meetingSlackDeliveries.deliveredById], references: [users.id] }),
 }));
