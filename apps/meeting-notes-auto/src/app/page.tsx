@@ -42,6 +42,54 @@ export default function Home() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const rafRef = useRef<number | null>(null);
+
+  function drawVisualizer() {
+    const canvas = canvasRef.current;
+    const analyser = analyserRef.current;
+    if (!canvas || !analyser) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    analyser.getByteTimeDomainData(dataArray);
+
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#c0392b";
+    ctx.beginPath();
+
+    const sliceWidth = width / bufferLength;
+    let x = 0;
+    for (let i = 0; i < bufferLength; i++) {
+      const v = dataArray[i] / 128;
+      const y = (v * height) / 2;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      x += sliceWidth;
+    }
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+
+    rafRef.current = requestAnimationFrame(drawVisualizer);
+  }
+
+  function stopVisualizer() {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    analyserRef.current = null;
+    void audioContextRef.current?.close();
+    audioContextRef.current = null;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
   async function startRecording() {
     setError(null);
     setResult(null);
@@ -53,6 +101,7 @@ export default function Home() {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
       recorder.onstop = () => {
+        stopVisualizer();
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
         void processRecording(blob);
@@ -62,6 +111,17 @@ export default function Home() {
       setStage("recording");
       setSeconds(0);
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+
+      // Live waveform — separate from MediaRecorder, purely for visual
+      // feedback that the mic is actually picking up sound.
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+      drawVisualizer();
     } catch {
       setError("마이크 접근 권한이 필요합니다.");
     }
@@ -118,9 +178,12 @@ export default function Home() {
               {stage === "recording" ? "■ 회의 종료" : "● 회의 시작하기"}
             </button>
             {stage === "recording" && (
-              <div className="timer">
-                {mm}:{ss}
-              </div>
+              <>
+                <canvas ref={canvasRef} className="visualizer" width={600} height={80} />
+                <div className="timer">
+                  {mm}:{ss}
+                </div>
+              </>
             )}
           </>
         ) : (
