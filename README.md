@@ -7,6 +7,10 @@
 **중요: Phase 1은 모든 채널 연동이 mock입니다.** 실제 Instagram/Threads/Blogger에 게시되는
 기능은 없습니다 (Phase 2 범위). 관리자 승인 없이는 어떤 배포 작업도 생성되지 않습니다.
 
+## 배포
+
+프로덕션: https://ai-content-orchestrator.vercel.app (Vercel, `main` 브랜치에 푸시하면 자동 배포)
+
 ## 로컬 실행
 
 ```bash
