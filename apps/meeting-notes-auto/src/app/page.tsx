@@ -11,6 +11,7 @@ interface AnalysisResult {
   driveLink: string;
   transcript: string;
   analysis: {
+    title: string;
     summaryKo: string;
     summaryZh: string;
     decisions: string[];
@@ -114,7 +115,7 @@ export default function Home() {
               className={`record-btn ${stage === "recording" ? "recording" : "idle"}`}
               onClick={stage === "recording" ? stopRecording : startRecording}
             >
-              {stage === "recording" ? "■ 녹음 정지" : "● 녹음 시작"}
+              {stage === "recording" ? "■ 회의 종료" : "● 회의 시작하기"}
             </button>
             {stage === "recording" && (
               <div className="timer">
@@ -130,6 +131,9 @@ export default function Home() {
 
         {result && (
           <div className="result" style={{ textAlign: "left" }}>
+            <div>
+              <h2 style={{ fontSize: 18, textTransform: "none", color: "var(--ink)" }}>{result.analysis.title}</h2>
+            </div>
             <div>
               <span className="pill">{result.slack.mode === "MOCK" ? "Slack 시뮬레이션" : "Slack 전송됨"}</span>
               {result.slack.mode === "PRODUCTION" && !result.slack.succeeded && (
@@ -195,7 +199,7 @@ export default function Home() {
                 setStage("idle");
               }}
             >
-              새 회의 녹음
+              새 회의 시작하기
             </button>
           </div>
         )}

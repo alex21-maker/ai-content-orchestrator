@@ -24,7 +24,7 @@ export function buildSlackMessage(input: {
       : analysis.actionItems.map((a) => `• ${a.owner ? `*${a.owner}*: ` : ""}${a.text}`).join("\n");
 
   const blocks: Record<string, unknown>[] = [
-    { type: "header", text: { type: "plain_text", text: "📋 회의 자동 분석 완료", emoji: true } },
+    { type: "header", text: { type: "plain_text", text: `📋 ${analysis.title}`, emoji: true } },
     { type: "section", text: { type: "mrkdwn", text: `*🇰🇷 한국어 요약*\n${analysis.summaryKo || "-"}` } },
     { type: "section", text: { type: "mrkdwn", text: `*🇨🇳 中文摘要*\n${analysis.summaryZh || "-"}` } },
     { type: "section", text: { type: "mrkdwn", text: `*✅ 결정 사항*\n${bulletList(analysis.decisions, "없음")}` } },
@@ -34,7 +34,7 @@ export function buildSlackMessage(input: {
     { type: "context", elements: [{ type: "mrkdwn", text: `🎙️ <${driveLink}|원본 녹음 파일 (Google Drive)>` }] },
   ];
 
-  const text = `📋 회의 자동 분석 완료 — ${analysis.summaryKo.slice(0, 200)}`;
+  const text = `📋 ${analysis.title} — ${analysis.summaryKo.slice(0, 200)}`;
 
   return { text, blocks };
 }
