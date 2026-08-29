@@ -1,19 +1,25 @@
-// Uploads a recorded meeting's audio file to a shared Google Drive folder
-// using a service account. The target folder must be shared with the
-// service account's email (as Editor) for this to work.
+// Uploads a recorded meeting's audio file to a Google Drive folder using
+// OAuth 2.0 (a refresh token for the folder owner's own account) — NOT a
+// service account. Service accounts have zero storage quota of their own,
+// and personal (non-Workspace) Gmail accounts can't use Shared Drives or
+// domain-wide delegation to work around that, so uploads must run as the
+// real account whose quota the files should count against.
 
 import { google } from "googleapis";
 import { Readable } from "node:stream";
 
-function loadServiceAccountKey(): { client_email: string; private_key: string } {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON 환경변수가 설정되어 있지 않습니다.");
+function getOAuthClient() {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error(
+      "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN 환경변수가 필요합니다."
+    );
   }
-  // Accept either the raw JSON string or a base64-encoded copy of it (base64
-  // is more forgiving of platform env-var UI quoting/newline mangling).
-  const text = raw.trim().startsWith("{") ? raw : Buffer.from(raw, "base64").toString("utf8");
-  return JSON.parse(text);
+  const client = new google.auth.OAuth2(clientId, clientSecret);
+  client.setCredentials({ refresh_token: refreshToken });
+  return client;
 }
 
 export async function uploadAudioToDrive(
@@ -26,12 +32,7 @@ export async function uploadAudioToDrive(
     throw new Error("GOOGLE_DRIVE_FOLDER_ID 환경변수가 설정되어 있지 않습니다.");
   }
 
-  const key = loadServiceAccountKey();
-  const auth = new google.auth.JWT({
-    email: key.client_email,
-    key: key.private_key,
-    scopes: ["https://www.googleapis.com/auth/drive.file"],
-  });
+  const auth = getOAuthClient();
   const drive = google.drive({ version: "v3", auth });
 
   const res = await drive.files.create({
