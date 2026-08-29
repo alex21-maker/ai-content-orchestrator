@@ -22,11 +22,41 @@ npm run dev
 
 | 변수 | 설명 |
 |---|---|
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | Google Cloud 서비스 계정 키(JSON) — raw JSON 또는 base64. 이 계정의 이메일을 업로드 대상 Drive 폴더에 **편집자**로 공유해야 합니다. |
+| `GOOGLE_OAUTH_CLIENT_ID` | Google Cloud OAuth 2.0 클라이언트 ID. |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | 위 클라이언트의 시크릿. |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | 업로드 대상 폴더를 소유한 **본인 Google 계정**으로 발급받은 refresh token (아래 참고). |
 | `GOOGLE_DRIVE_FOLDER_ID` | 업로드 대상 폴더 ID (폴더 URL의 마지막 부분). |
 | `OPENAI_API_KEY` | Whisper 음성인식용. |
 | `ANTHROPIC_API_KEY` | Claude 분석용. |
 | `SLACK_WEBHOOK_URL` | 선택. 없으면 전송이 시뮬레이션(MOCK)됩니다. |
+
+### 왜 서비스 계정이 아니라 OAuth인가
+
+**서비스 계정은 자체 저장 용량이 0바이트**입니다. 개인(비-Workspace) Gmail 계정 소유의 폴더에
+서비스 계정으로 업로드를 시도하면 `Service Accounts do not have storage quota` 오류가 납니다.
+Google이 제시하는 공식 대안(공유 드라이브, 도메인 위임)은 둘 다 **Google Workspace 전용**이라
+개인 Gmail에서는 쓸 수 없습니다. 그래서 이 앱은 **폴더 소유자 본인 계정으로 인증하는 OAuth
+refresh token** 방식을 씁니다 — 업로드된 파일이 그 계정 자신의 용량을 씁니다.
+
+### Refresh token 발급 방법 (OAuth Playground 이용)
+
+1. Google Cloud Console → 해당 프로젝트 → **API 및 서비스 → OAuth 동의 화면**에서 동의 화면을
+   구성합니다 (User Type: 외부/External). 테스트 사용자로 본인 이메일을 추가하거나, 가능하면
+   **게시(Publish)**해서 테스트 모드의 7일 refresh token 만료를 피하세요 (`drive.file`은
+   Google이 재검토를 요구하는 "제한된(restricted)" 범위가 아니라 게시 자체는 어렵지 않습니다 —
+   다만 본인만 쓸 앱이라 "확인되지 않은 앱" 경고가 뜨면 그냥 진행하면 됩니다).
+2. **API 및 서비스 → 사용자 인증 정보 → 사용자 인증 정보 만들기 → OAuth 클라이언트 ID**
+   → 애플리케이션 유형 **웹 애플리케이션** → 승인된 리디렉션 URI에
+   `https://developers.google.com/oauthplayground` 추가 → 만들기
+   → 생성된 **클라이언트 ID**와 **클라이언트 보안 비밀** 저장
+3. https://developers.google.com/oauthplayground 접속
+4. 오른쪽 위 톱니바퀴(설정) 클릭 → **Use your own OAuth credentials** 체크 →
+   위 클라이언트 ID/보안 비밀 입력
+5. 왼쪽 목록에서 **Drive API v3** 찾기 → `https://www.googleapis.com/auth/drive.file` 범위 선택
+   → **Authorize APIs** → 업로드 대상 폴더를 소유한 본인 Google 계정으로 로그인/허용
+6. **Exchange authorization code for tokens** 클릭 → 화면에 나오는 **Refresh token** 복사
+
+이렇게 받은 refresh token은 (앱을 게시했다면) 만료되지 않고 계속 쓸 수 있습니다.
 
 ## 알려진 제한사항
 
