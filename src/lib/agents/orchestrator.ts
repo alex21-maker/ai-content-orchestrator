@@ -33,7 +33,7 @@ import type { Channel } from "./shared";
 
 const CHANNELS: Channel[] = ["INSTAGRAM", "THREADS", "BLOGGER"];
 
-function toDbAgentRunStatus(status: AgentStatus): "COMPLETED" | "NEEDS_REVISION" | "BLOCKED" | "FAILED" {
+export function toDbAgentRunStatus(status: AgentStatus): "COMPLETED" | "NEEDS_REVISION" | "BLOCKED" | "FAILED" {
   switch (status) {
     case "completed":
       return "COMPLETED";

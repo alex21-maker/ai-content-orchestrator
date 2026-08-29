@@ -32,6 +32,27 @@ npm run dev            # http://localhost:3000
 | `NEXTAUTH_URL` | 로컬은 `http://localhost:3000`, Vercel은 배포 URL. |
 | `AUTH_TRUST_HOST` | 로컬/비-Vercel 호스트에서 필수 (`"true"`). Vercel은 자체적으로 신뢰하므로 Vercel 대시보드에는 보통 설정할 필요 없음. |
 | `CONNECTOR_MODE` | Phase 1은 `"mock"` 고정. |
+| `SLACK_WEBHOOK_URL` | 선택. 회의 요약 "Slack으로 전송" 기능에 사용할 Incoming Webhook URL. 비워두면 실제 전송 없이 시뮬레이션(MOCK)됩니다. |
+
+## 회의 녹음/분석 (한중 병행)
+
+`/dashboard/meetings`에서 한국어·중국어가 섞여 진행되는 회의를 녹음/기록하고, 언어별 핵심
+발언·결정 사항·액션 아이템·리스크를 추출해 Slack으로 전달할 수 있습니다.
+
+1. **녹음/회의록 등록**: 브라우저 마이크로 직접 녹음(`MediaRecorder`, 실제 동작)하거나 음성
+   파일을 업로드해 회의에 첨부합니다. **Phase 1에는 음성인식(STT) 연동이 없어** 녹음 파일은
+   저장만 될 뿐 자동으로 텍스트가 되지 않습니다 — 분석하려면 회의록 텍스트를 직접 붙여넣어야
+   합니다(화자 구분은 `이름: 발언` 형식 권장).
+2. **분석 실행**: `src/lib/agents/meeting-analysis.ts`가 문장별로 한글/한자 스크립트를 감지해
+   한국어·중국어·병행(code-switching)·미분류로 분류하고, 키워드 매칭으로 결정 사항/액션
+   아이템/리스크를 원문 그대로 발췌합니다. **이 추출은 규칙 기반이며 실제 LLM 의미
+   요약이나 번역이 아닙니다** — 다른 Phase 1 mock 에이전트(리서치/카피 등)와 달리 실제 회의
+   내용을 다루므로 내용을 지어내지 않고, 항상 원문 발췌로만 결과를 구성합니다. Phase 2에서
+   Claude API 등 실제 LLM 연동으로 교체하면 진짜 의미 요약/번역이 가능합니다.
+3. **Slack 전달**: `SLACK_WEBHOOK_URL`이 설정되어 있으면 실제로 해당 채널에 전송됩니다(OAuth
+   앱 등록 없이 Incoming Webhook만 있으면 되므로, 다른 채널 커넥터와 달리 Phase 1에서도 진짜로
+   동작합니다). 설정되어 있지 않으면 전송을 시뮬레이션(MOCK)하고 그 결과를 회의 상세 화면의
+   "Slack 전송 기록"에 남깁니다.
 
 ## DB 마이그레이션 (Drizzle)
 
@@ -58,7 +79,7 @@ npm run db:seed        # 데모 데이터 시드
 ```bash
 npm run typecheck   # tsc --noEmit
 npm run lint         # eslint
-npm test              # vitest — 27개 단위 테스트 (상태 머신, 콘텐츠 해시, mock 커넥터, postable-variants 회귀 테스트)
+npm test              # vitest — 35개 단위 테스트 (상태 머신, 콘텐츠 해시, mock 커넥터, postable-variants 회귀 테스트, 회의 분석 언어감지/추출)
 npm run build         # production build
 ```
 
@@ -124,6 +145,9 @@ Phase 1은 `src/lib/connectors/mock-connector.ts`의 `MockConnector`만 존재�
   (다른 화면들과 달리 우선순위가 낮다고 판단해 Phase 1에서 제외했습니다).
 - **댓글/멘션 모니터링, 실험(A/B), 성과 기반 추천은 전혀 구현되어 있지 않습니다** (PRD
   11번 섹션 "추가 고도화 기능" — Phase 3 범위).
+- **회의 분석에 음성인식(STT)이 없습니다.** 녹음 파일은 저장되지만 텍스트로 자동 변환되지
+  않으므로 회의록 텍스트를 사람이 직접 입력해야 분석이 가능합니다. 분석 자체도 규칙 기반
+  추출(키워드/스크립트 감지)이며 실제 LLM 요약·번역이 아닙니다 — "회의 녹음/분석" 절 참고.
 
 ## Phase 2 실제 연동을 위해 준비할 것
 
