@@ -7,6 +7,7 @@ const NAV = [
   { href: "/dashboard", label: "홈" },
   { href: "/dashboard/campaigns", label: "캠페인" },
   { href: "/dashboard/meetings", label: "회의" },
+  { href: "https://note.lablab.cloud", label: "회의록", external: true },
   { href: "/dashboard/approvals", label: "승인 대기" },
   { href: "/dashboard/calendar", label: "콘텐츠 캘린더" },
   { href: "/dashboard/analytics", label: "성과 분석" },
@@ -31,28 +32,52 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </div>
         <span className="mock-badge md:mt-6 md:hidden">MOCK MODE</span>
         <nav className="hidden flex-col gap-1 md:mt-6 md:flex">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded-md px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--accent-soft)]"
-            >
-              {item.label}
-            </Link>
-          ))}
+          {NAV.map((item) =>
+            item.external ? (
+              <a
+                key={item.href}
+                href={item.href}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-md px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--accent-soft)]"
+              >
+                {item.label}
+              </a>
+            ) : (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="rounded-md px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--accent-soft)]"
+              >
+                {item.label}
+              </Link>
+            )
+          )}
         </nav>
         <span className="mock-badge mt-6 hidden md:inline-flex">MOCK MODE</span>
       </aside>
       <nav className="-mx-1 flex flex-wrap gap-1 md:hidden">
-        {NAV.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className="rounded-md px-2.5 py-1 text-xs text-[var(--ink)] hover:bg-[var(--accent-soft)]"
-          >
-            {item.label}
-          </Link>
-        ))}
+        {NAV.map((item) =>
+          item.external ? (
+            <a
+              key={item.href}
+              href={item.href}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md px-2.5 py-1 text-xs text-[var(--ink)] hover:bg-[var(--accent-soft)]"
+            >
+              {item.label}
+            </a>
+          ) : (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="rounded-md px-2.5 py-1 text-xs text-[var(--ink)] hover:bg-[var(--accent-soft)]"
+            >
+              {item.label}
+            </Link>
+          )
+        )}
       </nav>
       <main className="min-w-0 flex-1">{children}</main>
     </div>
