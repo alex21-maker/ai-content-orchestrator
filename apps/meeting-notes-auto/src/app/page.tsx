@@ -10,6 +10,7 @@ interface ActionItem {
 interface AnalysisResult {
   driveLink: string;
   transcript: string;
+  meetingName: string;
   analysis: {
     title: string;
     summaryKo: string;
@@ -41,6 +42,7 @@ export default function Home() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [meetingName, setMeetingName] = useState("");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -48,9 +50,17 @@ export default function Home() {
   const rafRef = useRef<number | null>(null);
 
   function drawVisualizer() {
-    const canvas = canvasRef.current;
     const analyser = analyserRef.current;
-    if (!canvas || !analyser) return;
+    if (!analyser) return; // recording stopped
+
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      // The <canvas> only mounts once React finishes the "recording" stage
+      // re-render, which hasn't happened yet on the very first call — keep
+      // polling each frame instead of silently giving up on the loop.
+      rafRef.current = requestAnimationFrame(drawVisualizer);
+      return;
+    }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
@@ -137,6 +147,7 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("audio", blob, "recording.webm");
+      formData.append("meetingName", meetingName.trim());
 
       // The single /api/process call does upload+STT+analysis+Slack
       // server-side; these intermediate stage labels are a best-effort
@@ -171,14 +182,27 @@ export default function Home() {
       <div className="card" style={{ textAlign: "center" }}>
         {stage === "idle" || stage === "recording" ? (
           <>
+            {stage === "idle" && (
+              <input
+                type="text"
+                value={meetingName}
+                onChange={(e) => setMeetingName(e.target.value)}
+                placeholder="회의/프로젝트 이름을 입력하세요"
+                className="name-input"
+              />
+            )}
             <button
               className={`record-btn ${stage === "recording" ? "recording" : "idle"}`}
               onClick={stage === "recording" ? stopRecording : startRecording}
+              disabled={stage === "idle" && meetingName.trim().length === 0}
             >
               {stage === "recording" ? "■ 회의 종료" : "● 회의 시작하기"}
             </button>
             {stage === "recording" && (
               <>
+                <div className="rec-indicator">
+                  <span className="rec-dot" /> 녹음 중
+                </div>
                 <canvas ref={canvasRef} className="visualizer" width={600} height={80} />
                 <div className="timer">
                   {mm}:{ss}
@@ -194,6 +218,7 @@ export default function Home() {
 
         {result && (
           <div className="result" style={{ textAlign: "left" }}>
+            {result.meetingName && <p className="sub" style={{ margin: 0 }}>{result.meetingName}</p>}
             <div>
               <h2 style={{ fontSize: 18, textTransform: "none", color: "var(--ink)" }}>{result.analysis.title}</h2>
             </div>
@@ -260,6 +285,7 @@ export default function Home() {
               onClick={() => {
                 setResult(null);
                 setStage("idle");
+                setMeetingName("");
               }}
             >
               새 회의 시작하기
