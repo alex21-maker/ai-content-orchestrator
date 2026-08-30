@@ -25,7 +25,12 @@ export async function POST(request: NextRequest) {
 
     const buffer = Buffer.from(await audio.arrayBuffer());
     const mimeType = audio.type || "audio/webm";
-    const filename = `meeting-${new Date().toISOString().replace(/[:.]/g, "-")}.webm`;
+    const rawMeetingName = formData.get("meetingName");
+    const meetingName = typeof rawMeetingName === "string" ? rawMeetingName.trim().slice(0, 80) : "";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = meetingName
+      ? `${meetingName.replace(/\//g, "-")}-${timestamp}.webm`
+      : `meeting-${timestamp}.webm`;
 
     const drive = await uploadAudioToDrive(buffer, filename, mimeType);
     const transcript = await transcribeAudio(buffer, filename, mimeType);
@@ -43,6 +48,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       driveLink: drive.webViewLink,
       transcript,
+      meetingName,
       analysis,
       slack,
     });
