@@ -46,3 +46,9 @@ export async function uploadAudioToDrive(
   }
   return { id: res.data.id, webViewLink: res.data.webViewLink };
 }
+
+export async function deleteFileFromDrive(fileId: string): Promise<void> {
+  const auth = getOAuthClient();
+  const drive = google.drive({ version: "v3", auth });
+  await drive.files.delete({ fileId });
+}

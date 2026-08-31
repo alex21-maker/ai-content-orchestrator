@@ -3,13 +3,23 @@ import { uploadAudioToDrive } from "@/lib/google-drive";
 import { transcribeAudio } from "@/lib/whisper";
 import { analyzeMeetingTranscript } from "@/lib/analysis";
 import { sendToSlack } from "@/lib/slack";
+import { insertMeeting } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+function parseParticipants(raw: FormDataEntryValue | null): string[] {
+  if (typeof raw !== "string") return [];
+  return raw
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+}
+
 // POST /api/process — the whole pipeline in one call:
 // audio (multipart) -> Google Drive upload -> Whisper transcription ->
-// Claude analysis -> Slack delivery. No auth, no DB — stateless by design.
+// Claude analysis -> Slack delivery -> save to the meeting list. No auth —
+// there's one shared list, no per-user scoping.
 //
 // Practical limit: Vercel serverless functions cap the request body at
 // ~4.5MB, so this comfortably handles a few minutes of compressed audio but
@@ -27,6 +37,7 @@ export async function POST(request: NextRequest) {
     const mimeType = audio.type || "audio/webm";
     const rawMeetingName = formData.get("meetingName");
     const meetingName = typeof rawMeetingName === "string" ? rawMeetingName.trim().slice(0, 80) : "";
+    const participants = parseParticipants(formData.get("participants"));
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filename = meetingName
       ? `${meetingName.replace(/\//g, "-")}-${timestamp}.webm`
@@ -42,13 +53,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const analysis = await analyzeMeetingTranscript(transcript);
+    const analysis = await analyzeMeetingTranscript(transcript, participants);
     const slack = await sendToSlack({ driveLink: drive.webViewLink, transcript, analysis });
 
+    // Recording -> Drive -> Whisper -> Claude -> Slack already succeeded by
+    // this point; a DB hiccup (e.g. DATABASE_URL not configured yet) should
+    // not throw away that work and report failure to the user.
+    let meetingId: string | null = null;
+    try {
+      const meeting = await insertMeeting({
+        projectName: meetingName || "제목 없는 회의",
+        participants,
+        driveFileId: drive.id,
+        driveLink: drive.webViewLink,
+        transcript,
+        analysis,
+      });
+      meetingId = meeting.id;
+    } catch (dbErr) {
+      console.error("Failed to save meeting to list:", dbErr);
+    }
+
     return NextResponse.json({
+      id: meetingId,
       driveLink: drive.webViewLink,
       transcript,
       meetingName,
+      participants,
       analysis,
       slack,
     });
