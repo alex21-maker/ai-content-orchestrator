@@ -177,6 +177,83 @@ h1 {
   border-radius: 999px;
 }
 
+.speaker-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.transcript-full {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--sub);
+  white-space: pre-wrap;
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+}
+
+.list-heading {
+  margin: 40px 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.meeting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.meeting-item {
+  padding: 16px 20px;
+}
+
+.meeting-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.meeting-item-title {
+  margin: 2px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.meeting-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.expand-arrow {
+  color: var(--sub);
+  font-size: 12px;
+}
+
+.delete-btn {
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 a {
   color: var(--accent);
 }
