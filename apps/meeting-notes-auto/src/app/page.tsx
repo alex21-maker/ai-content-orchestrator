@@ -22,16 +22,6 @@ interface Analysis {
   speakerSegments: SpeakerSegment[];
 }
 
-interface AnalysisResult {
-  id: string | null;
-  driveLink: string;
-  transcript: string;
-  meetingName: string;
-  participants: string[];
-  analysis: Analysis;
-  slack: { mode: "MOCK" | "PRODUCTION"; succeeded: boolean; errorMessage?: string };
-}
-
 interface MeetingListItem {
   id: string;
   projectName: string;
@@ -42,17 +32,21 @@ interface MeetingListItem {
   createdAt: string;
 }
 
-type Stage = "idle" | "recording" | "uploading" | "transcribing" | "analyzing" | "done" | "error";
+interface PartStatus {
+  index: number;
+  status: "processing" | "done" | "error";
+  title?: string;
+  message?: string;
+}
 
-const STAGE_LABEL: Record<Stage, string> = {
-  idle: "",
-  recording: "녹음 중...",
-  uploading: "구글 드라이브에 업로드 중...",
-  transcribing: "음성을 텍스트로 변환 중 (Whisper)...",
-  analyzing: "AI가 회의 내용을 분석 중 (Claude)...",
-  done: "완료!",
-  error: "오류가 발생했습니다.",
-};
+type Stage = "idle" | "recording";
+
+// Vercel serverless functions reject request bodies over ~4.5MB before our
+// route handler ever runs. Rolling the recording over to a new segment
+// comfortably under that (leaving room for multipart overhead and the other
+// form fields) lets a long meeting keep recording uninterrupted, split into
+// multiple uploaded/analyzed parts instead of failing outright.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 function bulletOrNone(items: string[]) {
   return items.length === 0 ? (
@@ -64,6 +58,22 @@ function bulletOrNone(items: string[]) {
       ))}
     </ul>
   );
+}
+
+// A response that never reaches our route handler (Vercel's ~4.5MB body
+// limit, a platform-level 5xx/timeout page) comes back as plain text, not
+// JSON — res.json() on that throws a raw, unreadable parse error instead of
+// a message the user can act on.
+async function parseJsonResponse(res: Response): Promise<Record<string, unknown>> {
+  const bodyText = await res.text();
+  try {
+    return JSON.parse(bodyText);
+  } catch {
+    if (!res.ok && /request entity too large/i.test(bodyText)) {
+      throw new Error("녹음 파일이 너무 큽니다 (최대 약 4.5MB). 더 짧게 녹음한 뒤 다시 시도해주세요.");
+    }
+    throw new Error(`서버 응답이 올바르지 않습니다 (HTTP ${res.status}): ${bodyText.slice(0, 100)}`);
+  }
 }
 
 function AnalysisDetails({
@@ -138,13 +148,18 @@ function AnalysisDetails({
 export default function Home() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const bytesRef = useRef(0);
+  const streamRef = useRef<MediaStream | null>(null);
+  const partIndexRef = useRef(1);
+  const finalizingRef = useRef(false);
+
   const [stage, setStage] = useState<Stage>("idle");
   const [seconds, setSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [meetingName, setMeetingName] = useState("");
   const [participants, setParticipants] = useState("");
+  const [parts, setParts] = useState<PartStatus[]>([]);
 
   const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
@@ -159,9 +174,9 @@ export default function Home() {
   async function loadMeetings() {
     try {
       const res = await fetch("/api/meetings");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? "회의록 목록을 불러오지 못했습니다.");
-      setMeetings(json.meetings);
+      const json = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(typeof json.error === "string" ? json.error : "회의록 목록을 불러오지 못했습니다.");
+      setMeetings(json.meetings as MeetingListItem[]);
       setListError(null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "회의록 목록을 불러오지 못했습니다.");
@@ -177,8 +192,8 @@ export default function Home() {
     setDeletingId(id);
     try {
       const res = await fetch(`/api/meetings/${id}`, { method: "DELETE" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? "삭제에 실패했습니다.");
+      const json = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(typeof json.error === "string" ? json.error : "삭제에 실패했습니다.");
       setMeetings((prev) => (prev ? prev.filter((m) => m.id !== id) : prev));
       if (expandedId === id) setExpandedId(null);
     } catch (err) {
@@ -239,30 +254,83 @@ export default function Home() {
     if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
+  // Uploads/transcribes/analyzes one recorded segment in the background —
+  // recording (possibly of the next part already) is never blocked on this.
+  async function processPart(blob: Blob, index: number) {
+    setParts((prev) => [...prev, { index, status: "processing" }]);
+    try {
+      const formData = new FormData();
+      formData.append("audio", blob, "recording.webm");
+      formData.append("meetingName", `${meetingName.trim()} (${index})`);
+      formData.append("participants", participants.trim());
+      const res = await fetch("/api/process", { method: "POST", body: formData });
+      const json = await parseJsonResponse(res);
+      if (!res.ok) {
+        throw new Error(typeof json.error === "string" ? json.error : "처리에 실패했습니다.");
+      }
+      const analysis = json.analysis as Analysis | undefined;
+      setParts((prev) => prev.map((p) => (p.index === index ? { ...p, status: "done", title: analysis?.title } : p)));
+      void loadMeetings();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "처리에 실패했습니다.";
+      setParts((prev) => prev.map((p) => (p.index === index ? { ...p, status: "error", message } : p)));
+    }
+  }
+
+  // Records one segment on the shared stream. When it stops because the
+  // upload-size limit was hit mid-recording, immediately starts the next
+  // segment on the same stream so recording continues without the user
+  // noticing — MediaRecorder can only produce a valid, decodable file by
+  // calling stop() (a timeslice chunk alone isn't independently playable),
+  // so a brief recorder handoff is unavoidable to split the audio at all.
+  function startSegment() {
+    const stream = streamRef.current;
+    if (!stream) return;
+    chunksRef.current = [];
+    bytesRef.current = 0;
+    const recorder = new MediaRecorder(stream);
+    const myIndex = partIndexRef.current;
+    recorder.ondataavailable = (e) => {
+      if (e.data.size === 0) return;
+      chunksRef.current.push(e.data);
+      bytesRef.current += e.data.size;
+      if (bytesRef.current >= MAX_UPLOAD_BYTES && !finalizingRef.current) {
+        recorder.stop();
+      }
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+      void processPart(blob, myIndex);
+      if (finalizingRef.current) {
+        stopVisualizer();
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        if (timerRef.current) clearInterval(timerRef.current);
+      } else {
+        partIndexRef.current += 1;
+        startSegment();
+      }
+    };
+    recorder.start(1000);
+    mediaRecorderRef.current = recorder;
+  }
+
   async function startRecording() {
     setError(null);
-    setResult(null);
+    setParts([]);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      chunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      recorder.onstop = () => {
-        stopVisualizer();
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        void processRecording(blob);
-      };
-      recorder.start();
-      mediaRecorderRef.current = recorder;
+      streamRef.current = stream;
+      partIndexRef.current = 1;
+      finalizingRef.current = false;
       setStage("recording");
       setSeconds(0);
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
 
       // Live waveform — separate from MediaRecorder, purely for visual
-      // feedback that the mic is actually picking up sound.
+      // feedback that the mic is actually picking up sound. Tied to the
+      // stream, not to individual recorded segments, so it keeps running
+      // uninterrupted across a segment rollover.
       const audioContext = new AudioContext();
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
@@ -271,47 +339,21 @@ export default function Home() {
       audioContextRef.current = audioContext;
       analyserRef.current = analyser;
       drawVisualizer();
+
+      startSegment();
     } catch {
       setError("마이크 접근 권한이 필요합니다.");
     }
   }
 
   function stopRecording() {
-    if (timerRef.current) clearInterval(timerRef.current);
+    finalizingRef.current = true;
     mediaRecorderRef.current?.stop();
+    setStage("idle");
+    setMeetingName("");
+    setParticipants("");
   }
 
-  async function processRecording(blob: Blob) {
-    setStage("uploading");
-    try {
-      const formData = new FormData();
-      formData.append("audio", blob, "recording.webm");
-      formData.append("meetingName", meetingName.trim());
-      formData.append("participants", participants.trim());
-
-      // The single /api/process call does upload+STT+analysis+Slack
-      // server-side; these intermediate stage labels are a best-effort
-      // progress indicator, not real per-step events (no streaming yet).
-      setStage("transcribing");
-      const uploadPromise = fetch("/api/process", { method: "POST", body: formData });
-      const stageTimer = setTimeout(() => setStage("analyzing"), 4000);
-
-      const res = await uploadPromise;
-      clearTimeout(stageTimer);
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json?.error ?? "처리에 실패했습니다.");
-      }
-      setResult(json);
-      setStage("done");
-      void loadMeetings();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "처리에 실패했습니다.");
-      setStage("error");
-    }
-  }
-
-  const isBusy = stage !== "idle" && stage !== "done" && stage !== "error";
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
 
@@ -321,84 +363,62 @@ export default function Home() {
       <p className="sub">녹음 → 구글 드라이브 저장 → AI 분석 → Slack 전달까지 한 번에</p>
 
       <div className="card" style={{ textAlign: "center" }}>
-        {stage === "idle" || stage === "recording" ? (
+        {stage === "idle" && (
           <>
-            {stage === "idle" && (
-              <>
-                <input
-                  type="text"
-                  value={meetingName}
-                  onChange={(e) => setMeetingName(e.target.value)}
-                  placeholder="회의/프로젝트 이름을 입력하세요"
-                  className="name-input"
-                />
-                <input
-                  type="text"
-                  value={participants}
-                  onChange={(e) => setParticipants(e.target.value)}
-                  placeholder="회의 참가자 이름 (쉼표로 구분, 예: 김철수, 왕리)"
-                  className="name-input"
-                />
-              </>
-            )}
-            <button
-              className={`record-btn ${stage === "recording" ? "recording" : "idle"}`}
-              onClick={stage === "recording" ? stopRecording : startRecording}
-              disabled={stage === "idle" && meetingName.trim().length === 0}
-            >
-              {stage === "recording" ? "■ 회의 종료" : "● 회의 시작하기"}
-            </button>
-            {stage === "recording" && (
-              <>
-                <div className="rec-indicator">
-                  <span className="rec-dot" /> 녹음 중
-                </div>
-                <canvas ref={canvasRef} className="visualizer" width={600} height={80} />
-                <div className="timer">
-                  {mm}:{ss}
-                </div>
-              </>
-            )}
+            <input
+              type="text"
+              value={meetingName}
+              onChange={(e) => setMeetingName(e.target.value)}
+              placeholder="회의/프로젝트 이름을 입력하세요"
+              className="name-input"
+            />
+            <input
+              type="text"
+              value={participants}
+              onChange={(e) => setParticipants(e.target.value)}
+              placeholder="회의 참가자 이름 (쉼표로 구분, 예: 김철수, 왕리)"
+              className="name-input"
+            />
           </>
-        ) : (
-          <div className="status">{STAGE_LABEL[stage]}</div>
+        )}
+        <button
+          className={`record-btn ${stage === "recording" ? "recording" : "idle"}`}
+          onClick={stage === "recording" ? stopRecording : startRecording}
+          disabled={stage === "idle" && meetingName.trim().length === 0}
+        >
+          {stage === "recording" ? "■ 회의 종료" : "● 회의 시작하기"}
+        </button>
+        {stage === "recording" && (
+          <>
+            <div className="rec-indicator">
+              <span className="rec-dot" /> 녹음 중
+            </div>
+            <canvas ref={canvasRef} className="visualizer" width={600} height={80} />
+            <div className="timer">
+              {mm}:{ss}
+            </div>
+          </>
         )}
 
         {error && <div className="error">{error}</div>}
 
-        {result && (
-          <div className="result" style={{ textAlign: "left" }}>
-            {result.meetingName && (
-              <p className="sub" style={{ margin: 0 }}>
-                {result.meetingName}
-                {result.participants.length > 0 && ` · ${result.participants.join(", ")}`}
-              </p>
-            )}
-            <div>
-              <h2 style={{ fontSize: 18, textTransform: "none", color: "var(--ink)" }}>{result.analysis.title}</h2>
-            </div>
-            <div>
-              <span className="pill">{result.slack.mode === "MOCK" ? "Slack 시뮬레이션" : "Slack 전송됨"}</span>
-              {result.slack.mode === "PRODUCTION" && !result.slack.succeeded && (
-                <span className="error"> — {result.slack.errorMessage}</span>
-              )}
-            </div>
-            <AnalysisDetails analysis={result.analysis} transcript={result.transcript} driveLink={result.driveLink} />
-            <button
-              className="record-btn idle"
-              onClick={() => {
-                setResult(null);
-                setStage("idle");
-                setMeetingName("");
-                setParticipants("");
-              }}
-            >
-              새 회의 시작하기
-            </button>
+        {parts.length > 0 && (
+          <div className="parts-panel">
+            <h2>처리 현황 (약 4MB마다 자동으로 파트가 나뉩니다)</h2>
+            <ul>
+              {parts.map((p) => (
+                <li key={p.index}>
+                  파트 {p.index}:{" "}
+                  {p.status === "processing"
+                    ? "처리 중..."
+                    : p.status === "done"
+                      ? `완료${p.title ? ` — ${p.title}` : ""}`
+                      : `오류 — ${p.message}`}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
-
-        {isBusy && stage !== "recording" && <div className="status">잠시만 기다려주세요...</div>}
       </div>
 
       <h2 className="list-heading">회의록 리스트</h2>

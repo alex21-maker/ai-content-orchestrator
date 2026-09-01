@@ -145,6 +145,26 @@ h1 {
   font-size: 13px;
 }
 
+.parts-panel {
+  margin-top: 20px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.parts-panel h2 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--sub);
+  margin: 0 0 8px;
+}
+
+.parts-panel ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.7;
+}
+
 .result {
   margin-top: 24px;
   display: flex;
