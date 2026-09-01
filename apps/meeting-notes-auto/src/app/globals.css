@@ -145,6 +145,12 @@ h1 {
   font-size: 13px;
 }
 
+.note {
+  margin-top: 16px;
+  color: var(--accent);
+  font-size: 13px;
+}
+
 .result {
   margin-top: 24px;
   display: flex;

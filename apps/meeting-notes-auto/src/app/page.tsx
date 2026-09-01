@@ -44,6 +44,12 @@ interface MeetingListItem {
 
 type Stage = "idle" | "recording" | "uploading" | "transcribing" | "analyzing" | "done" | "error";
 
+// Vercel serverless functions reject request bodies over ~4.5MB before our
+// route handler ever runs. Auto-stopping comfortably under that (leaving
+// room for multipart overhead and the other form fields) avoids the recorder
+// silently producing a file that's guaranteed to fail on upload.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+
 const STAGE_LABEL: Record<Stage, string> = {
   idle: "",
   recording: "녹음 중...",
@@ -64,6 +70,22 @@ function bulletOrNone(items: string[]) {
       ))}
     </ul>
   );
+}
+
+// A response that never reaches our route handler (Vercel's ~4.5MB body
+// limit, a platform-level 5xx/timeout page) comes back as plain text, not
+// JSON — res.json() on that throws a raw, unreadable parse error instead of
+// a message the user can act on.
+async function parseJsonResponse(res: Response): Promise<Record<string, unknown>> {
+  const bodyText = await res.text();
+  try {
+    return JSON.parse(bodyText);
+  } catch {
+    if (!res.ok && /request entity too large/i.test(bodyText)) {
+      throw new Error("녹음 파일이 너무 큽니다 (최대 약 4.5MB). 더 짧게 녹음한 뒤 다시 시도해주세요.");
+    }
+    throw new Error(`서버 응답이 올바르지 않습니다 (HTTP ${res.status}): ${bodyText.slice(0, 100)}`);
+  }
 }
 
 function AnalysisDetails({
@@ -138,6 +160,8 @@ function AnalysisDetails({
 export default function Home() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const bytesRef = useRef(0);
+  const [note, setNote] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("idle");
   const [seconds, setSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -159,9 +183,9 @@ export default function Home() {
   async function loadMeetings() {
     try {
       const res = await fetch("/api/meetings");
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? "회의록 목록을 불러오지 못했습니다.");
-      setMeetings(json.meetings);
+      const json = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(typeof json.error === "string" ? json.error : "회의록 목록을 불러오지 못했습니다.");
+      setMeetings(json.meetings as MeetingListItem[]);
       setListError(null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "회의록 목록을 불러오지 못했습니다.");
@@ -177,8 +201,8 @@ export default function Home() {
     setDeletingId(id);
     try {
       const res = await fetch(`/api/meetings/${id}`, { method: "DELETE" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error ?? "삭제에 실패했습니다.");
+      const json = await parseJsonResponse(res);
+      if (!res.ok) throw new Error(typeof json.error === "string" ? json.error : "삭제에 실패했습니다.");
       setMeetings((prev) => (prev ? prev.filter((m) => m.id !== id) : prev));
       if (expandedId === id) setExpandedId(null);
     } catch (err) {
@@ -242,12 +266,20 @@ export default function Home() {
   async function startRecording() {
     setError(null);
     setResult(null);
+    setNote(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
+      bytesRef.current = 0;
       const recorder = new MediaRecorder(stream);
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+        if (e.data.size === 0) return;
+        chunksRef.current.push(e.data);
+        bytesRef.current += e.data.size;
+        if (bytesRef.current >= MAX_UPLOAD_BYTES) {
+          setNote("최대 업로드 용량(약 4MB)에 도달하여 녹음을 자동으로 종료했습니다.");
+          stopRecording();
+        }
       };
       recorder.onstop = () => {
         stopVisualizer();
@@ -255,7 +287,10 @@ export default function Home() {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
         void processRecording(blob);
       };
-      recorder.start();
+      // A timeslice is required to get periodic ondataavailable events at
+      // all (otherwise MediaRecorder only emits one blob at the very end,
+      // which is too late to catch an oversized recording before upload).
+      recorder.start(1000);
       mediaRecorderRef.current = recorder;
       setStage("recording");
       setSeconds(0);
@@ -298,11 +333,11 @@ export default function Home() {
 
       const res = await uploadPromise;
       clearTimeout(stageTimer);
-      const json = await res.json();
+      const json = await parseJsonResponse(res);
       if (!res.ok) {
-        throw new Error(json?.error ?? "처리에 실패했습니다.");
+        throw new Error(typeof json.error === "string" ? json.error : "처리에 실패했습니다.");
       }
-      setResult(json);
+      setResult(json as unknown as AnalysisResult);
       setStage("done");
       void loadMeetings();
     } catch (err) {
@@ -365,6 +400,7 @@ export default function Home() {
         )}
 
         {error && <div className="error">{error}</div>}
+        {note && <div className="note">{note}</div>}
 
         {result && (
           <div className="result" style={{ textAlign: "left" }}>
@@ -391,6 +427,7 @@ export default function Home() {
                 setStage("idle");
                 setMeetingName("");
                 setParticipants("");
+                setNote(null);
               }}
             >
               새 회의 시작하기
