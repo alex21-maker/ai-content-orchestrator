@@ -43,6 +43,34 @@ export async function listFilingsForEntity(entityId: string) {
     .orderBy(desc(financialFilings.periodEnd));
 }
 
+// ---------------------------------------------------------------------------
+// Public, unauthenticated reads — power the view-only /finance/* pages (no
+// login, no org scoping). Requested as a temporary "let people see the data
+// first" step before real login is wired up there; unlike everything above,
+// these intentionally skip the organizationId check, so don't reuse them
+// anywhere that should stay tenant-scoped. Read-only: there is no public
+// write path anywhere in this module.
+// ---------------------------------------------------------------------------
+
+export async function listAllEntitiesPublic() {
+  return db.select().from(financeEntities).orderBy(financeEntities.name);
+}
+
+export async function loadEntityPublic(entityId: string) {
+  const [entity] = await db.select().from(financeEntities).where(eq(financeEntities.id, entityId)).limit(1);
+  return entity ?? null;
+}
+
+export async function loadFilingPublic(filingId: string) {
+  const [row] = await db
+    .select({ filing: financialFilings, entity: financeEntities })
+    .from(financialFilings)
+    .innerJoin(financeEntities, eq(financialFilings.financeEntityId, financeEntities.id))
+    .where(eq(financialFilings.id, filingId))
+    .limit(1);
+  return row ?? null;
+}
+
 // KPI line-item codes surfaced on the dashboard — see
 // src/lib/finance/line-item-dictionary.ts for the full mapping.
 export const FINANCE_KPI_CODES = [
