@@ -32,6 +32,11 @@ interface MeetingListItem {
   createdAt: string;
 }
 
+interface MeetingGroup {
+  projectName: string; // a matched campaign name, or "기타" for anything unmatched
+  meetings: MeetingListItem[];
+}
+
 interface PartStatus {
   index: number;
   status: "processing" | "done" | "error";
@@ -161,7 +166,7 @@ export default function Home() {
   const [participants, setParticipants] = useState("");
   const [parts, setParts] = useState<PartStatus[]>([]);
 
-  const [meetings, setMeetings] = useState<MeetingListItem[] | null>(null);
+  const [meetingGroups, setMeetingGroups] = useState<MeetingGroup[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -176,7 +181,7 @@ export default function Home() {
       const res = await fetch("/api/meetings");
       const json = await parseJsonResponse(res);
       if (!res.ok) throw new Error(typeof json.error === "string" ? json.error : "회의록 목록을 불러오지 못했습니다.");
-      setMeetings(json.meetings as MeetingListItem[]);
+      setMeetingGroups(json.groups as MeetingGroup[]);
       setListError(null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "회의록 목록을 불러오지 못했습니다.");
@@ -194,7 +199,13 @@ export default function Home() {
       const res = await fetch(`/api/meetings/${id}`, { method: "DELETE" });
       const json = await parseJsonResponse(res);
       if (!res.ok) throw new Error(typeof json.error === "string" ? json.error : "삭제에 실패했습니다.");
-      setMeetings((prev) => (prev ? prev.filter((m) => m.id !== id) : prev));
+      setMeetingGroups((prev) =>
+        prev
+          ? prev
+              .map((group) => ({ ...group, meetings: group.meetings.filter((m) => m.id !== id) }))
+              .filter((group) => group.meetings.length > 0)
+          : prev
+      );
       if (expandedId === id) setExpandedId(null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "삭제에 실패했습니다.");
@@ -423,51 +434,58 @@ export default function Home() {
 
       <h2 className="list-heading">회의록 리스트</h2>
       {listError && <div className="error">{listError}</div>}
-      {meetings === null && !listError && <p className="sub">불러오는 중...</p>}
-      {meetings !== null && meetings.length === 0 && <p className="sub">아직 저장된 회의록이 없습니다.</p>}
+      {meetingGroups === null && !listError && <p className="sub">불러오는 중...</p>}
+      {meetingGroups !== null && meetingGroups.length === 0 && <p className="sub">아직 저장된 회의록이 없습니다.</p>}
 
-      <div className="meeting-list">
-        {meetings?.map((meeting) => {
-          const isExpanded = expandedId === meeting.id;
-          return (
-            <div key={meeting.id} className="card meeting-item">
-              <div className="meeting-item-header" onClick={() => setExpandedId(isExpanded ? null : meeting.id)}>
-                <div>
-                  <p className="sub" style={{ margin: 0 }}>
-                    {new Date(meeting.createdAt).toLocaleString("ko-KR")}
-                    {meeting.participants.length > 0 && ` · ${meeting.participants.join(", ")}`}
-                  </p>
-                  <p className="meeting-item-title">
-                    {meeting.projectName} — {meeting.analysis.title}
-                  </p>
+      {meetingGroups?.map((group) => (
+        <div key={group.projectName} className="project-group">
+          <h3 className={`project-group-heading ${group.projectName === "기타" ? "other" : ""}`}>
+            {group.projectName}
+          </h3>
+          <div className="meeting-list">
+            {group.meetings.map((meeting) => {
+              const isExpanded = expandedId === meeting.id;
+              return (
+                <div key={meeting.id} className="card meeting-item">
+                  <div className="meeting-item-header" onClick={() => setExpandedId(isExpanded ? null : meeting.id)}>
+                    <div>
+                      <p className="sub" style={{ margin: 0 }}>
+                        {new Date(meeting.createdAt).toLocaleString("ko-KR")}
+                        {meeting.participants.length > 0 && ` · ${meeting.participants.join(", ")}`}
+                      </p>
+                      <p className="meeting-item-title">
+                        {meeting.projectName} — {meeting.analysis.title}
+                      </p>
+                    </div>
+                    <div className="meeting-item-actions">
+                      <button
+                        className="delete-btn"
+                        disabled={deletingId === meeting.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDelete(meeting.id);
+                        }}
+                      >
+                        {deletingId === meeting.id ? "삭제 중..." : "삭제"}
+                      </button>
+                      <span className="expand-arrow">{isExpanded ? "▲" : "▼"}</span>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="result" style={{ textAlign: "left" }}>
+                      <AnalysisDetails
+                        analysis={meeting.analysis}
+                        transcript={meeting.transcript}
+                        driveLink={meeting.driveLink}
+                      />
+                    </div>
+                  )}
                 </div>
-                <div className="meeting-item-actions">
-                  <button
-                    className="delete-btn"
-                    disabled={deletingId === meeting.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleDelete(meeting.id);
-                    }}
-                  >
-                    {deletingId === meeting.id ? "삭제 중..." : "삭제"}
-                  </button>
-                  <span className="expand-arrow">{isExpanded ? "▲" : "▼"}</span>
-                </div>
-              </div>
-              {isExpanded && (
-                <div className="result" style={{ textAlign: "left" }}>
-                  <AnalysisDetails
-                    analysis={meeting.analysis}
-                    transcript={meeting.transcript}
-                    driveLink={meeting.driveLink}
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

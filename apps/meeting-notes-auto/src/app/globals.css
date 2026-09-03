@@ -222,6 +222,25 @@ h1 {
   font-weight: 700;
 }
 
+.project-group {
+  margin-top: 20px;
+}
+
+.project-group:first-of-type {
+  margin-top: 12px;
+}
+
+.project-group-heading {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.project-group-heading.other {
+  color: var(--sub);
+}
+
 .meeting-list {
   display: flex;
   flex-direction: column;

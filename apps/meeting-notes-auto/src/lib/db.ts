@@ -109,6 +109,64 @@ export async function listMeetings(): Promise<MeetingRecord[]> {
   return result.rows.map(rowToRecord);
 }
 
+export interface MeetingGroup {
+  projectName: string; // a real campaign name, or "기타" for anything unmatched
+  meetings: MeetingRecord[];
+}
+
+// Multi-part recordings from the upload-size rollover are suffixed "(N)" —
+// strip that before comparing so all parts of one meeting still group and
+// match under the same base name.
+function normalizeProjectName(name: string): string {
+  return name
+    .trim()
+    .replace(/\s*\(\d+\)\s*$/, "")
+    .toLowerCase();
+}
+
+// Groups meetings by the campaign (project) they belong to in the main
+// ai-content-orchestrator app (proj.lablab.cloud) — matched by name only,
+// since the two apps share no auth or FK relationship (this app is
+// deliberately no-login). A meeting whose project name doesn't match any
+// existing campaign is grouped under "기타" rather than dropped.
+export async function listMeetingsGroupedByProject(): Promise<MeetingGroup[]> {
+  const meetings = await listMeetings();
+
+  let campaignNames: string[] = [];
+  try {
+    const campaignRows = await getPool().query<{ name: string }>(`SELECT DISTINCT name FROM campaigns`);
+    campaignNames = campaignRows.rows.map((r) => r.name);
+  } catch (err) {
+    console.error("Failed to load campaign names for grouping:", err);
+  }
+
+  const campaignByNormalized = new Map<string, string>();
+  for (const name of campaignNames) {
+    campaignByNormalized.set(normalizeProjectName(name), name);
+  }
+
+  const groups = new Map<string, MeetingRecord[]>();
+  for (const meeting of meetings) {
+    const displayName = campaignByNormalized.get(normalizeProjectName(meeting.projectName)) ?? "기타";
+    const bucket = groups.get(displayName);
+    if (bucket) bucket.push(meeting);
+    else groups.set(displayName, [meeting]);
+  }
+
+  const otherGroup = groups.get("기타");
+  groups.delete("기타");
+
+  // meetings within each group are already newest-first (from listMeetings),
+  // so meetings[0].createdAt is each group's most recent activity.
+  const sortedGroups: MeetingGroup[] = Array.from(groups.entries())
+    .map(([projectName, groupMeetings]) => ({ projectName, meetings: groupMeetings }))
+    .sort((a, b) => new Date(b.meetings[0].createdAt).getTime() - new Date(a.meetings[0].createdAt).getTime());
+
+  if (otherGroup) sortedGroups.push({ projectName: "기타", meetings: otherGroup });
+
+  return sortedGroups;
+}
+
 export async function getMeeting(id: string): Promise<MeetingRecord | null> {
   await ensureSchema();
   const result = await getPool().query(`SELECT * FROM standalone_meeting_notes WHERE id = $1`, [id]);
