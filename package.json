@@ -16,6 +16,7 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
+    "@e965/xlsx": "^0.20.3",
     "@paralleldrive/cuid2": "^3.3.0",
     "bcryptjs": "2.4.3",
     "clsx": "2.1.1",
