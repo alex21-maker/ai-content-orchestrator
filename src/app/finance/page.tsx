@@ -2,6 +2,14 @@ import Link from "next/link";
 import { listAllEntitiesPublic, listFilingsForEntity, getFilingKpis } from "@/lib/finance/queries";
 import { formatAmount, formatPeriod } from "@/lib/finance/format";
 
+// This route has no dynamic segment and no cookies/headers() call to give
+// Next.js a signal to skip static generation, so without this it gets
+// prerendered at *build time* — which queries the DB from the build step
+// and breaks the build wherever that DB isn't reachable there (this broke
+// the Vercel deploy). Every other finance page is scoped by a dynamic
+// [entityId]/[filingId] segment, which already forces on-demand rendering.
+export const dynamic = "force-dynamic";
+
 export default async function PublicFinanceEntitiesPage() {
   const entities = await listAllEntitiesPublic();
 
