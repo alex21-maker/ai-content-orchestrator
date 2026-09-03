@@ -82,6 +82,11 @@ export const meetingStatusEnum = pgEnum("meeting_status", [
   "PUBLISHED",
   "FAILED",
 ]);
+export const financeStatementTypeEnum = pgEnum("finance_statement_type", [
+  "BALANCE_SHEET",
+  "INCOME_STATEMENT",
+  "CASH_FLOW",
+]);
 
 // ---------------------------------------------------------------------------
 // Identity & access
@@ -535,6 +540,97 @@ export const meetingSlackDeliveries = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Finance — monthly statutory filings (China 小企业会计准则 3표 세트) per
+// legal entity, uploaded as a single xls/xlsx workbook and parsed into
+// standardized line items keyed by the filing's 行次 (line number) — see
+// src/lib/finance/line-item-dictionary.ts and src/lib/finance/parse-statement.ts.
+// ---------------------------------------------------------------------------
+
+// A legal entity under the org (e.g. "레이블 차이나" / 杭州嘞博贸易有限公司).
+// Deliberately separate from brandProfiles: brand = content voice, entity =
+// tax/accounting subject. An org can have several of each, independently.
+export const financeEntities = pgTable(
+  "finance_entities",
+  {
+    id: cuid(),
+    organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    legalNameZh: text("legal_name_zh"),
+    taxId: text("tax_id"),
+    country: text("country").notNull().default("CN"),
+    currency: text("currency").notNull().default("CNY"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("finance_entities_org_idx").on(t.organizationId),
+    uniqueIndex("finance_entities_org_tax_id_unique").on(t.organizationId, t.taxId),
+  ]
+);
+
+// One uploaded workbook = one filing for one entity/period, containing the
+// 3 statutory statements below. Re-uploading the same entity+period replaces
+// the prior filing's statements (see src/lib/finance/filings.ts).
+export const financialFilings = pgTable(
+  "financial_filings",
+  {
+    id: cuid(),
+    financeEntityId: text("finance_entity_id").notNull().references(() => financeEntities.id, { onDelete: "cascade" }),
+    periodEnd: timestamp("period_end").notNull(),
+    sourceFileName: text("source_file_name").notNull(),
+    sourceFileUrl: text("source_file_url").notNull(),
+    // Cross-statement validation warnings from the parser (e.g. balance
+    // sheet assets != liabilities+equity, or BS cash != CF ending cash).
+    // Non-blocking — the filing still saves so nothing is silently dropped.
+    warnings: text("warnings").array().notNull().default([]),
+    uploadedById: text("uploaded_by_id").notNull().references(() => users.id),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("financial_filings_entity_idx").on(t.financeEntityId),
+    uniqueIndex("financial_filings_entity_period_unique").on(t.financeEntityId, t.periodEnd),
+  ]
+);
+
+export const financialStatements = pgTable(
+  "financial_statements",
+  {
+    id: cuid(),
+    filingId: text("filing_id").notNull().references(() => financialFilings.id, { onDelete: "cascade" }),
+    statementType: financeStatementTypeEnum("statement_type").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("financial_statements_filing_idx").on(t.filingId),
+    uniqueIndex("financial_statements_filing_type_unique").on(t.filingId, t.statementType),
+  ]
+);
+
+export const financialLineItems = pgTable(
+  "financial_line_items",
+  {
+    id: cuid(),
+    statementId: text("statement_id").notNull().references(() => financialStatements.id, { onDelete: "cascade" }),
+    // 行次 — the standardized line number from the statutory form. Stable
+    // across periods even though the Chinese label text can vary slightly.
+    lineNo: integer("line_no").notNull(),
+    // Standardized code + Korean label from the dictionary lookup, null when
+    // a lineNo isn't in the dictionary yet (still stored, just unmapped).
+    code: text("code"),
+    labelZh: text("label_zh").notNull(),
+    labelKo: text("label_ko"),
+    // Balance sheet only: which side of the two-column layout this row is
+    // from (行次 1-30 assets vs 31-53 liabilities+equity). Null for PL/CF.
+    side: text("side"),
+    // BS: 期末余额 (period-end) / PL,CF: 本年累计金额 (year-to-date)
+    value: doublePrecision("value"),
+    // BS: 年初余额 (year-start) / PL,CF: 本月金额 (this month)
+    compareValue: doublePrecision("compare_value"),
+  },
+  (t) => [index("financial_line_items_statement_idx").on(t.statementId), index("financial_line_items_code_idx").on(t.code)]
+);
+
+// ---------------------------------------------------------------------------
 // Relations (for Drizzle's relational query API)
 // ---------------------------------------------------------------------------
 
@@ -554,6 +650,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   promptTemplates: many(promptTemplates),
   notifications: many(notifications),
   meetings: many(meetings),
+  financeEntities: many(financeEntities),
 }));
 
 export const membershipsRelations = relations(memberships, ({ one }) => ({
@@ -645,4 +742,24 @@ export const meetingSummariesRelations = relations(meetingSummaries, ({ one }) =
 export const meetingSlackDeliveriesRelations = relations(meetingSlackDeliveries, ({ one }) => ({
   meeting: one(meetings, { fields: [meetingSlackDeliveries.meetingId], references: [meetings.id] }),
   deliveredBy: one(users, { fields: [meetingSlackDeliveries.deliveredById], references: [users.id] }),
+}));
+
+export const financeEntitiesRelations = relations(financeEntities, ({ one, many }) => ({
+  organization: one(organizations, { fields: [financeEntities.organizationId], references: [organizations.id] }),
+  filings: many(financialFilings),
+}));
+
+export const financialFilingsRelations = relations(financialFilings, ({ one, many }) => ({
+  financeEntity: one(financeEntities, { fields: [financialFilings.financeEntityId], references: [financeEntities.id] }),
+  uploadedBy: one(users, { fields: [financialFilings.uploadedById], references: [users.id] }),
+  statements: many(financialStatements),
+}));
+
+export const financialStatementsRelations = relations(financialStatements, ({ one, many }) => ({
+  filing: one(financialFilings, { fields: [financialStatements.filingId], references: [financialFilings.id] }),
+  lineItems: many(financialLineItems),
+}));
+
+export const financialLineItemsRelations = relations(financialLineItems, ({ one }) => ({
+  statement: one(financialStatements, { fields: [financialLineItems.statementId], references: [financialStatements.id] }),
 }));

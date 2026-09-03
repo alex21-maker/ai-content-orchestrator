@@ -8,6 +8,7 @@ const NAV = [
   { href: "/dashboard/campaigns", label: "캠페인" },
   { href: "/dashboard/meetings", label: "회의" },
   { href: "https://note.lablab.cloud", label: "회의록", external: true },
+  { href: "/dashboard/finance", label: "재무" },
   { href: "/dashboard/approvals", label: "승인 대기" },
   { href: "/dashboard/calendar", label: "콘텐츠 캘린더" },
   { href: "/dashboard/analytics", label: "성과 분석" },
