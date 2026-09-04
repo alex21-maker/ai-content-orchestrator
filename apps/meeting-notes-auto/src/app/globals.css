@@ -20,7 +20,7 @@ body {
 }
 
 .wrap {
-  max-width: 640px;
+  max-width: 880px;
   margin: 0 auto;
   padding: 48px 20px;
 }
@@ -222,12 +222,68 @@ h1 {
   font-weight: 700;
 }
 
-.project-group {
-  margin-top: 20px;
+.layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  margin-top: 12px;
 }
 
-.project-group:first-of-type {
-  margin-top: 12px;
+.sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 20px;
+}
+
+.project-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.project-nav-item:hover {
+  background: var(--bg);
+}
+
+.project-nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.project-nav-item.other {
+  color: var(--sub);
+}
+
+.project-nav-item.active.other {
+  color: var(--accent);
+}
+
+.project-nav-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sub);
+}
+
+.main-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .project-group-heading {
@@ -245,6 +301,34 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.session-parts {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.part-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.part-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.part-item-title {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .meeting-item {
@@ -295,4 +379,20 @@ h1 {
 
 a {
   color: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    position: static;
+  }
+
+  .project-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
 }

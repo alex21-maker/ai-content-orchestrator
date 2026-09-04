@@ -32,9 +32,15 @@ interface MeetingListItem {
   createdAt: string;
 }
 
+interface MeetingSession {
+  sessionKey: string;
+  meetings: MeetingListItem[]; // ordered by part number ascending
+  startedAt: string;
+}
+
 interface MeetingGroup {
   projectName: string; // a matched campaign name, or "기타" for anything unmatched
-  meetings: MeetingListItem[];
+  sessions: MeetingSession[];
 }
 
 interface PartStatus {
@@ -156,6 +162,7 @@ export default function Home() {
   const bytesRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
   const partIndexRef = useRef(1);
+  const sessionIdRef = useRef("");
   const finalizingRef = useRef(false);
 
   const [stage, setStage] = useState<Stage>("idle");
@@ -168,7 +175,9 @@ export default function Home() {
 
   const [meetingGroups, setMeetingGroups] = useState<MeetingGroup[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [expandedSessionKey, setExpandedSessionKey] = useState<string | null>(null);
+  const [expandedPartId, setExpandedPartId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -181,7 +190,11 @@ export default function Home() {
       const res = await fetch("/api/meetings");
       const json = await parseJsonResponse(res);
       if (!res.ok) throw new Error(typeof json.error === "string" ? json.error : "회의록 목록을 불러오지 못했습니다.");
-      setMeetingGroups(json.groups as MeetingGroup[]);
+      const groups = json.groups as MeetingGroup[];
+      setMeetingGroups(groups);
+      // Default to the first project on first load only — don't yank the
+      // user back to it on every background refetch.
+      setSelectedProject((prev) => prev ?? groups[0]?.projectName ?? null);
       setListError(null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "회의록 목록을 불러오지 못했습니다.");
@@ -202,11 +215,16 @@ export default function Home() {
       setMeetingGroups((prev) =>
         prev
           ? prev
-              .map((group) => ({ ...group, meetings: group.meetings.filter((m) => m.id !== id) }))
-              .filter((group) => group.meetings.length > 0)
+              .map((group) => ({
+                ...group,
+                sessions: group.sessions
+                  .map((session) => ({ ...session, meetings: session.meetings.filter((m) => m.id !== id) }))
+                  .filter((session) => session.meetings.length > 0),
+              }))
+              .filter((group) => group.sessions.length > 0)
           : prev
       );
-      if (expandedId === id) setExpandedId(null);
+      if (expandedPartId === id) setExpandedPartId(null);
     } catch (err) {
       setListError(err instanceof Error ? err.message : "삭제에 실패했습니다.");
     } finally {
@@ -274,6 +292,7 @@ export default function Home() {
       formData.append("audio", blob, "recording.webm");
       formData.append("meetingName", `${meetingName.trim()} (${index})`);
       formData.append("participants", participants.trim());
+      formData.append("sessionId", sessionIdRef.current);
       const res = await fetch("/api/process", { method: "POST", body: formData });
       const json = await parseJsonResponse(res);
       if (!res.ok) {
@@ -333,6 +352,10 @@ export default function Home() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       partIndexRef.current = 1;
+      sessionIdRef.current =
+        typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       finalizingRef.current = false;
       setStage("recording");
       setSeconds(0);
@@ -367,6 +390,7 @@ export default function Home() {
 
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
+  const selectedGroup = meetingGroups?.find((g) => g.projectName === selectedProject) ?? null;
 
   return (
     <div className="wrap">
@@ -437,55 +461,107 @@ export default function Home() {
       {meetingGroups === null && !listError && <p className="sub">불러오는 중...</p>}
       {meetingGroups !== null && meetingGroups.length === 0 && <p className="sub">아직 저장된 회의록이 없습니다.</p>}
 
-      {meetingGroups?.map((group) => (
-        <div key={group.projectName} className="project-group">
-          <h3 className={`project-group-heading ${group.projectName === "기타" ? "other" : ""}`}>
-            {group.projectName}
-          </h3>
-          <div className="meeting-list">
-            {group.meetings.map((meeting) => {
-              const isExpanded = expandedId === meeting.id;
-              return (
-                <div key={meeting.id} className="card meeting-item">
-                  <div className="meeting-item-header" onClick={() => setExpandedId(isExpanded ? null : meeting.id)}>
-                    <div>
-                      <p className="sub" style={{ margin: 0 }}>
-                        {new Date(meeting.createdAt).toLocaleString("ko-KR")}
-                        {meeting.participants.length > 0 && ` · ${meeting.participants.join(", ")}`}
-                      </p>
-                      <p className="meeting-item-title">
-                        {meeting.projectName} — {meeting.analysis.title}
-                      </p>
-                    </div>
-                    <div className="meeting-item-actions">
-                      <button
-                        className="delete-btn"
-                        disabled={deletingId === meeting.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleDelete(meeting.id);
-                        }}
-                      >
-                        {deletingId === meeting.id ? "삭제 중..." : "삭제"}
-                      </button>
-                      <span className="expand-arrow">{isExpanded ? "▲" : "▼"}</span>
-                    </div>
-                  </div>
-                  {isExpanded && (
-                    <div className="result" style={{ textAlign: "left" }}>
-                      <AnalysisDetails
-                        analysis={meeting.analysis}
-                        transcript={meeting.transcript}
-                        driveLink={meeting.driveLink}
-                      />
-                    </div>
-                  )}
+      {meetingGroups !== null && meetingGroups.length > 0 && (
+        <div className="layout">
+          <aside className="sidebar">
+            <nav className="project-nav">
+              {meetingGroups.map((group) => (
+                <button
+                  key={group.projectName}
+                  className={`project-nav-item ${selectedProject === group.projectName ? "active" : ""} ${
+                    group.projectName === "기타" ? "other" : ""
+                  }`}
+                  onClick={() => setSelectedProject(group.projectName)}
+                >
+                  <span>{group.projectName}</span>
+                  <span className="project-nav-count">{group.sessions.length}</span>
+                </button>
+              ))}
+            </nav>
+          </aside>
+
+          <div className="main-content">
+            {selectedGroup && (
+              <>
+                <h3 className={`project-group-heading ${selectedGroup.projectName === "기타" ? "other" : ""}`}>
+                  {selectedGroup.projectName}
+                </h3>
+                <div className="meeting-list">
+                  {selectedGroup.sessions.map((session) => {
+                    const isSessionExpanded = expandedSessionKey === session.sessionKey;
+                    const first = session.meetings[0];
+                    const isMultiPart = session.meetings.length > 1;
+                    return (
+                      <div key={session.sessionKey} className="card meeting-item">
+                        <div
+                          className="meeting-item-header"
+                          onClick={() => setExpandedSessionKey(isSessionExpanded ? null : session.sessionKey)}
+                        >
+                          <div>
+                            <p className="sub" style={{ margin: 0 }}>
+                              {new Date(session.startedAt).toLocaleString("ko-KR")}
+                              {first.participants.length > 0 && ` · ${first.participants.join(", ")}`}
+                            </p>
+                            <p className="meeting-item-title">
+                              {first.analysis.title}
+                              {isMultiPart && ` (${session.meetings.length}개 파트)`}
+                            </p>
+                          </div>
+                          <div className="meeting-item-actions">
+                            <span className="expand-arrow">{isSessionExpanded ? "▲" : "▼"}</span>
+                          </div>
+                        </div>
+                        {isSessionExpanded && (
+                          <div className="session-parts">
+                            {session.meetings.map((meeting, i) => {
+                              const isPartExpanded = expandedPartId === meeting.id;
+                              return (
+                                <div key={meeting.id} className="part-item">
+                                  <div
+                                    className="part-item-header"
+                                    onClick={() => setExpandedPartId(isPartExpanded ? null : meeting.id)}
+                                  >
+                                    <span className="part-item-title">
+                                      {isMultiPart ? `파트 ${i + 1} — ` : ""}
+                                      {meeting.analysis.title}
+                                    </span>
+                                    <div className="meeting-item-actions">
+                                      <button
+                                        className="delete-btn"
+                                        disabled={deletingId === meeting.id}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleDelete(meeting.id);
+                                        }}
+                                      >
+                                        {deletingId === meeting.id ? "삭제 중..." : "삭제"}
+                                      </button>
+                                      <span className="expand-arrow">{isPartExpanded ? "▲" : "▼"}</span>
+                                    </div>
+                                  </div>
+                                  {isPartExpanded && (
+                                    <div className="result" style={{ textAlign: "left" }}>
+                                      <AnalysisDetails
+                                        analysis={meeting.analysis}
+                                        transcript={meeting.transcript}
+                                        driveLink={meeting.driveLink}
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </>
+            )}
           </div>
         </div>
-      ))}
+      )}
     </div>
   );
 }
