@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { uploadAudioToDrive } from "@/lib/google-drive";
 import { transcribeAudio } from "@/lib/whisper";
@@ -38,6 +39,11 @@ export async function POST(request: NextRequest) {
     const rawMeetingName = formData.get("meetingName");
     const meetingName = typeof rawMeetingName === "string" ? rawMeetingName.trim().slice(0, 80) : "";
     const participants = parseParticipants(formData.get("participants"));
+    const rawSessionId = formData.get("sessionId");
+    // Falls back to a fresh id if the client didn't send one (shouldn't
+    // happen — every recording generates one at 회의 시작하기 — but a
+    // missing id must never crash the request over an optional grouping key).
+    const sessionId = typeof rawSessionId === "string" && rawSessionId.trim() ? rawSessionId.trim() : randomUUID();
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filename = meetingName
       ? `${meetingName.replace(/\//g, "-")}-${timestamp}.webm`
@@ -68,6 +74,7 @@ export async function POST(request: NextRequest) {
         driveLink: drive.webViewLink,
         transcript,
         analysis,
+        sessionId,
       });
       meetingId = meeting.id;
     } catch (dbErr) {
