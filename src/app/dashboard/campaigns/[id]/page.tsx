@@ -7,6 +7,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { canEdit } from "@/lib/rbac";
 import { NewContentItemForm } from "@/components/new-content-item-form";
 import { ArchiveCampaignButton } from "@/components/archive-campaign-button";
+import { getMeetingTimelineForCampaign } from "@/lib/meeting-timeline";
 
 const STATUS_STYLES: Record<string, string> = {
   IDEA: "bg-gray-100 text-gray-700",
@@ -45,6 +46,8 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
     .where(eq(contentItems.campaignId, campaign.id))
     .orderBy(desc(contentItems.createdAt));
 
+  const meetingTimeline = await getMeetingTimelineForCampaign(campaign.name);
+
   const editable = canEdit(org.role);
 
   return (
@@ -77,6 +80,36 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
           <h2 className="text-xs font-bold uppercase tracking-wide text-[var(--sub)]">타겟 페르소나</h2>
           <p className="mt-1 whitespace-pre-wrap text-sm">{campaign.targetPersona || "—"}</p>
         </div>
+      </div>
+
+      <div className="mt-8">
+        <h2 className="text-sm font-bold">회의 타임라인</h2>
+        {meetingTimeline.length === 0 ? (
+          <p className="mt-3 text-sm text-[var(--sub)]">
+            아직 연결된 회의록이 없습니다. 회의록 자동화(note.lablab.cloud)에서 프로젝트명을 &ldquo;{campaign.name}&rdquo;로
+            입력하면 자동으로 연결됩니다.
+          </p>
+        ) : (
+          <ul className="mt-3 flex flex-col gap-3">
+            {meetingTimeline.map((meeting) => (
+              <li key={meeting.id} className="rounded-xl border border-[var(--line)] bg-white p-4">
+                <p className="text-xs text-[var(--sub)]">
+                  {new Date(meeting.meetingAt).toLocaleString("ko-KR")}
+                  {meeting.participants.length > 0 && ` · 참석자: ${meeting.participants.join(", ")}`}
+                </p>
+                <p className="mt-1.5 text-sm">{meeting.summaryKo || "요약 없음"}</p>
+                <a
+                  href={meeting.driveLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1.5 inline-block text-xs text-[var(--accent)]"
+                >
+                  원본 녹음 (Google Drive)
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       <div className="mt-8 flex items-center justify-between">
