@@ -6,7 +6,7 @@
 import "dotenv/config";
 import { hash } from "bcryptjs";
 import { db } from "./index";
-import { users, organizations, memberships, brandProfiles, socialConnections } from "./schema";
+import { users, organizations, memberships, brandProfiles, socialConnections, financeEntities } from "./schema";
 
 async function main() {
   const passwordHash = await hash("dev-password-1234", 10);
@@ -66,6 +66,20 @@ async function main() {
         status: "connected",
       })
       .onConflictDoNothing({ target: [socialConnections.organizationId, socialConnections.channel] });
+  }
+
+  // Finance entity shell only — no seeded filing/figures on purpose. Real
+  // monthly financial statements are confidential and should come from an
+  // actual upload through the dashboard (/dashboard/finance), never from a
+  // fixture checked into source control. legalNameZh/taxId auto-fill from
+  // the first uploaded filing (see src/lib/finance/ingest.ts).
+  // (taxId is null pre-upload, and Postgres treats NULL as distinct in the
+  // org+taxId unique index, so dedupe by name instead of onConflictDoNothing.)
+  const existingFinanceEntity = await db.query.financeEntities.findFirst({
+    where: (fe, { and, eq }) => and(eq(fe.organizationId, resolvedOrg.id), eq(fe.name, "레이블 차이나")),
+  });
+  if (!existingFinanceEntity) {
+    await db.insert(financeEntities).values({ organizationId: resolvedOrg.id, name: "레이블 차이나", country: "CN", currency: "CNY" });
   }
 
   console.log("Seed complete:");
