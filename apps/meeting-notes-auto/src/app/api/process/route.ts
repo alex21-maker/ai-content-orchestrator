@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { uploadAudioToDrive } from "@/lib/google-drive";
 import { transcribeAudio } from "@/lib/whisper";
 import { analyzeMeetingTranscript } from "@/lib/analysis";
-import { sendToSlack } from "@/lib/slack";
+import { sendToSlack, sendFailureAlert } from "@/lib/slack";
 import { insertMeeting } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -79,6 +79,8 @@ export async function POST(request: NextRequest) {
       meetingId = meeting.id;
     } catch (dbErr) {
       console.error("Failed to save meeting to list:", dbErr);
+      const dbMessage = dbErr instanceof Error ? dbErr.message : "알 수 없는 오류";
+      void sendFailureAlert("회의록 목록 저장 실패", dbMessage);
     }
 
     return NextResponse.json({
@@ -93,6 +95,10 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "처리 중 알 수 없는 오류가 발생했습니다.";
+    // This is the path a broken Google Drive token (or any other pipeline
+    // failure) takes — silently returning it to whoever happens to be
+    // recording is how a full week of meetings went unsaved unnoticed.
+    void sendFailureAlert("녹음 처리 실패", message);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
