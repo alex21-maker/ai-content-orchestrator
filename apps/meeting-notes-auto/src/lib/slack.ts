@@ -39,6 +39,29 @@ export function buildSlackMessage(input: {
   return { text, blocks };
 }
 
+// A processing failure (e.g. Google Drive token expired) used to go
+// unnoticed for over a week, since the only place it surfaced was the
+// screen of whoever happened to be recording at the time. This posts a
+// plain alert to the same Slack webhook so a broken pipeline is visible
+// immediately instead of silently dropping every meeting until someone
+// happens to check. Best-effort: a failure sending the alert must never
+// mask or replace the original error being reported.
+export async function sendFailureAlert(context: string, errorMessage: string): Promise<void> {
+  const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+  if (!webhookUrl) return;
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: `🚨 회의록 자동화 처리 실패 (${context})\n${errorMessage}`,
+      }),
+    });
+  } catch (err) {
+    console.error("Failed to send failure alert to Slack:", err);
+  }
+}
+
 export async function sendToSlack(input: {
   driveLink: string;
   transcript: string;
